@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biodiversity Analyzer</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Custom modal styles */
+        .modal {
+            display: none; /* Hidden by default */
+            transition: opacity 0.3s ease;
+        }
+        .modal-content {
+            transform: translateY(-20px);
+            transition: transform 0.3s ease;
+        }
+        .modal.flex {
+            opacity: 1;
+        }
+        .modal.flex .modal-content {
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body class="h-full bg-gray-50">
+    <div class="max-w-4xl mx-auto p-6 md:p-12">
+        <h1 class="text-3xl font-bold text-green-700 mb-6 text-center">Biodiversity Analyzer</h1>
+        
+        <!-- Tab Content: Bulk Data Analyzer -->
+        <div id="content-analyzer" class="tab-content">
+            <div class="bg-white p-6 rounded-lg shadow-xl border border-gray-200">
+                <p class="text-sm text-gray-600 mb-4">
+                    Enter or paste your data below. Use a CSV format with three columns: <br>
+                    <code class="text-xs bg-gray-100 p-1 rounded font-mono">Location,Species Name,Count</code>
+                </p>
+                <textarea id="bulk-data-input" rows="10"
+                            class="w-full p-2 border border-gray-300 rounded-md font-mono text-sm shadow-inner"
+                            placeholder="e.g.,&#10;Park A,American Robin,10&#10;Park A,Blue Jay,5&#10;Park B,American Robin,8&#10;Park B,Squirrel,12&#10;Park B,Blue Jay,2"></textarea>
+                <button id="calculate-bulk-btn"
+                        class="mt-4 w-full md:w-auto flex justify-center py-3 px-6 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                    Calculate Metrics
+                </button>
+                
+                <div id="bulk-results-container" class="mt-6 border-t border-gray-200 pt-6">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">Results</h3>
+                    <div id="bulk-results-list" class="space-y-4">
+                        <!-- Results will be injected here -->
+                        <p id="bulk-empty-state" class="text-gray-500">Enter data above and click "Calculate" to see results.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Alerts -->
+    <div id="custom-modal" class="modal fixed inset-0 z-50 overflow-auto bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div class="modal-content bg-white p-6 rounded-lg shadow-xl w-11/12 md:max-w-md mx-auto">
+            <h3 id="modal-title" class="text-lg font-medium leading-6 text-gray-900">Notice</h3>
+            <div class="mt-2">
+                <p id="modal-message" class="text-sm text-gray-500">Your message here.</p>
+            </div>
+            <div class="mt-4 text-right">
+                <button id="modal-close-btn" type="button" class="inline-flex justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                    OK
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script type="module">
+        // --- DOM Elements ---
+        const bulkDataInput = document.getElementById('bulk-data-input');
+        const calculateBulkBtn = document.getElementById('calculate-bulk-btn');
+        const bulkResultsContainer = document.getElementById('bulk-results-container');
+        const bulkResultsList = document.getElementById('bulk-results-list');
+        const bulkEmptyState = document.getElementById('bulk-empty-state');
+        
+        // --- Modal Elements ---
+        const customModal = document.getElementById('custom-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+
+        // --- Custom Alert Function ---
+        function showAlert(message, title = "Notice") {
+            modalTitle.textContent = title;
+            modalMessage.textContent = message;
+            customModal.style.display = 'flex';
+        }
+        
+        modalCloseBtn.addEventListener('click', () => {
+            customModal.style.display = 'none';
+        });
+
+        // --- Bulk Analyzer Logic ---
+        
+        calculateBulkBtn.addEventListener('click', () => {
+            const data = bulkDataInput.value;
+            if (!data.trim()) {
+                showAlert("Please paste your data into the text area.", "No Data");
+                return;
+            }
+            try {
+                const parsedData = parseBulkData(data);
+                if (Object.keys(parsedData).length === 0) {
+                    showAlert("Could not parse data. Please check the format: Location,Species,Count", "Parsing Error");
+                    return;
+                }
+                
+                const allLocationMetrics = [];
+                for (const location in parsedData) {
+                    const metrics = calculateSimpsonMetrics(parsedData[location]);
+                    allLocationMetrics.push({ location, ...metrics });
+                }
+                
+                renderMetricsResults(allLocationMetrics);
+
+            } catch (error) {
+                console.error("Error calculating metrics:", error);
+                showAlert(`An error occurred: ${error.message}`, "Calculation Error");
+            }
+        });
+        
+        /**
+         * Parses raw CSV text into a structured object grouped by location.
+         * @param {string} data - The raw CSV string.
+         * @returns {object} - e.g., { "Park A": { "Robin": 10, "Jay": 5 } }
+         */
+        function parseBulkData(data) {
+            const locations = {};
+            const lines = data.trim().split('\n');
+            
+            lines.forEach((line, index) => {
+                // Skip empty lines or potential headers
+                if (!line.trim()) return;
+                
+                const parts = line.split(',');
+                if (parts.length !== 3) {
+                    console.warn(`Skipping line ${index + 1}: Invalid format. Expected 3 columns, got ${parts.length}. Line: "${line}"`);
+                    return;
+                }
+                
+                const location = parts[0].trim();
+                const species = parts[1].trim();
+                const count = parseInt(parts[2].trim(), 10);
+                
+                if (!location || !species || isNaN(count) || count <= 0) {
+                    console.warn(`Skipping line ${index + 1}: Invalid data. Line: "${line}"`);
+                    return;
+                }
+                
+                if (!locations[location]) {
+                    locations[location] = {};
+                }
+                
+                locations[location][species] = (locations[location][species] || 0) + count;
+            });
+            
+            return locations;
+        }
+        
+        /**
+         * Calculates Richness, Simpson's Index, and Evenness for a single location.
+         * @param {object} speciesCounts - e.g., { "Robin": 10, "Jay": 5 }
+         * @returns {object} - { richness, totalIndividuals, simpsonIndex, simpsonEvenness }
+         */
+        function calculateSimpsonMetrics(speciesCounts) {
+            const richness = Object.keys(speciesCounts).length;
+            let totalIndividuals = 0;
+            let sumOfPiSquared = 0; // This is Simpson's D
+            
+            for (const species in speciesCounts) {
+                totalIndividuals += speciesCounts[species];
+            }
+            
+            if (totalIndividuals === 0 || richness === 0) {
+                return { richness: 0, totalIndividuals: 0, simpsonIndex: 0, simpsonEvenness: 0 };
+            }
+            
+            for (const species in speciesCounts) {
+                const count = speciesCounts[species];
+                const pi = count / totalIndividuals; // proportion
+                sumOfPiSquared += pi * pi;
+            }
+            
+            // Simpson's Index (1-D) - Probability 2 random individuals are different species
+            // Ranges from 0 (no diversity) to 1 (infinite diversity)
+            const simpsonIndex = 1 - sumOfPiSquared;
+            
+            // Simpson's Evenness (E_s) = (1 / D) / S
+            // D = sumOfPiSquared, S = richness
+            let simpsonEvenness = 0;
+            if (sumOfPiSquared > 0 && richness > 0) {
+                 simpsonEvenness = (1 / sumOfPiSquared) / richness;
+            }
+            // Cap evenness at 1 (can sometimes be slightly over due to floating point)
+            if (simpsonEvenness > 1) simpsonEvenness = 1;
+
+            return {
+                richness: richness,
+                totalIndividuals: totalIndividuals,
+                simpsonIndex: simpsonIndex,
+                simpsonEvenness: simpsonEvenness
+            };
+        }
+        
+        /**
+         * Renders the calculated metrics to the UI.
+         * @param {Array} allLocationMetrics - Array of metrics objects from calculateSimpsonMetrics.
+         */
+        function renderMetricsResults(allLocationMetrics) {
+            bulkResultsList.innerHTML = ''; // Clear previous results
+            
+            if (allLocationMetrics.length === 0) {
+                bulkEmptyState.classList.remove('hidden');
+                bulkEmptyState.textContent = "No valid data found to calculate.";
+                return;
+            }
+            
+            bulkEmptyState.classList.add('hidden');
+            
+            allLocationMetrics.forEach(metrics => {
+                const card = document.createElement('div');
+                card.className = 'bg-gray-50 p-4 rounded-lg shadow-inner border border-gray-200';
+                card.innerHTML = `
+                    <h4 class="text-lg font-semibold text-blue-800">${metrics.location}</h4>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+                        <div class="text-center">
+                            <p class="text-sm font-medium text-gray-600">Species Richness</p>
+                            <p class="text-2xl font-bold text-gray-800">${metrics.richness}</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-sm font-medium text-gray-600">Total Individuals</p>
+                            <p class="text-2xl font-bold text-gray-800">${metrics.totalIndividuals}</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-sm font-medium text-gray-600">Simpson's Index (1-D)</p>
+                            <p class="text-2xl font-bold text-gray-800">${metrics.simpsonIndex.toFixed(3)}</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-sm font-medium text-gray-600">Species Evenness</p>
+                            <p class="text-2xl font-bold text-gray-800">${metrics.simpsonEvenness.toFixed(3)}</p>
+                        </div>
+                    </div>
+                `;
+                bulkResultsList.appendChild(card);
+            });
+        }
+
+    </script>
+</body>
+</html>
+
